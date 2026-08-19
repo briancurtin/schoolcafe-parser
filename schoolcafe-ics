@@ -1,1 +1,92 @@
 #!/usr/bin/env python3
+
+"""
+schoolcafe-ics — An ICS formatter for SchoolCafe PDF menus
+
+This script reads JSON from stdin when piped from `schoolcafe-parse`
+
+Example:
+    cat ~/august_menu.pdf | ./schoolcafe-parse | ./schoolcafe-ics > august.ics
+
+OPTIONS:
+    * By default this will create each menu as an all-day event.
+    * If you want the events to have a defined start/end time,
+      set the following environment variables to UTC timestamps:
+      * MENU_START=HHMMSS
+      * MENU_END=HHMMSS
+      * For example, MENU_START=174500 MENU_END=181000 is my kid's 11:45–12:10 lunch
+"""
+
+import hashlib
+import io
+import json
+import os
+import sys
+import zoneinfo
+from datetime import datetime, UTC
+
+DTSTAMP = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+
+MENU_START = os.getenv("MENU_START")
+MENU_END = os.getenv("MENU_END")
+
+
+def main() -> int:
+    try:
+        full_menu: dict = json.loads(sys.stdin.read())
+    except KeyboardInterrupt:
+        return -1
+
+    metadata = full_menu.pop("_metadata")
+
+    sys.stdout.writelines(
+        [
+            "BEGIN:VCALENDAR\n",
+            "VERSION:2.0\n",
+            "PRODID:-//BrianCurtin//SchoolCafe to ICS//EN\n",
+        ]
+    )
+
+    for date, menus in full_menu.items():
+        if not menus:
+            continue
+
+        sys.stdout.writelines(
+            [
+                "BEGIN:VEVENT\n",
+                f"UID:{hashlib.md5(f"{metadata}-{date}-{menus}".encode("utf8")).hexdigest()}\n",
+                f"DTSTAMP:{DTSTAMP}\n",
+            ]
+        )
+
+        if all([MENU_START, MENU_END]):
+            sys.stdout.writelines(
+                [
+                    f"DTSTART:{date}T{MENU_START}Z\n",
+                    f"DTEND:{date}T{MENU_END}Z\n",
+                ]
+            )
+        else:
+            sys.stdout.write(f"DTSTART;VALUE=DATE:{date}\n")
+
+        sys.stdout.write("SUMMARY:Today's Menu\n")
+
+        if len(menus) == 1:
+            the_menu = next(iter(menus))
+            sys.stdout.write(f"DESCRIPTION:{" // ".join(menus[the_menu])}\n")
+        else:
+            sys.stdout.write("DESCRIPTION:")
+            for menu in menus:
+                sys.stdout.write(f"{menu}\n")
+                sys.stdout.write(f"{"\n".join(menus[menu])}")
+                sys.stdout.write("\n")
+
+        sys.stdout.writelines([f"LOCATION:{metadata["School"]}\n", "END:VEVENT\n"])
+
+    sys.stdout.write("END:VCALENDAR")
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

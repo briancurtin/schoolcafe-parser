@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-schoolcafe-parse — A parser for SchoolCafe PDF files
+schoolcafe-parse — A parser for SchoolCafe PDF menus
 
 This application takes a PDF file generated via SchoolCafe's print function,
 saved to PDF via Chrome's `Save as PDF` option, and reads it via stdin and
@@ -28,35 +28,37 @@ UNSET = datetime(1970, 1, 1)
 @dataclass
 class ParseResults:
     # Only the first page has the menu name, but we parse them in order
-    school_name: str
+    school: str
     grade: str
     menu_name: str
-    month: datetime
-    page_menu: dict
+    menu: dict
 
 
-def parse(page: list[str], month: datetime) -> ParseResults:
+def parse(page: list[str]) -> ParseResults:
     """Parse the lines in a menu page and return their menu details
 
     This reads page text line by line and assembles a dictionary of daily menus and their options
     """
 
-    # If we're not given the date it's because we're reading the first page
     # The last line in the file includes a details line, which we parse for year and month
-    if month == UNSET:
-        details = page.pop().strip()
-        school_name = page.pop().strip()
+    details = page.pop().strip()
+    menu_name, remains = details.split(",")
+    month_name, year, grade = remains.strip().split("-")
+    grade = grade.strip()
 
-        menu_name, remains = details.split(",")
-        month_name, year, grade = remains.strip().split("-")
+    month = datetime.strptime(f"{month_name.strip()} {year.strip()}", "%B %Y")
 
-        month = datetime.strptime(f"{month_name.strip()} {year.strip()}", "%B %Y")
-    else:
-        menu_name, school_name, grade = "", "", ""
+    # The second to last line is the name of the school
+    school = page.pop().strip()
+
+    # As we pass the menu lines, which are ALL CAPS, set that we're inside one
+    # so we append the following lines as items on that menu.
+    # In the one-page print it appears to only allow one category, which on
+    # our school's menu is 'ENTREES'. Not sure if that's standard for the platform.
+    current_menu = ""
+    menu: dict[str] = {}
 
     index = 0
-    current_menu = ""  # Ours only has ENTREES, but presumably there are more types
-    menu: dict[str] = {}
     while index < len(page):
         # We don't pre-strip lines here because we append menu items as-is
         # so they render with newlines as they do inside the calendar version.
@@ -65,6 +67,8 @@ def parse(page: list[str], month: datetime) -> ParseResults:
         try:
             current_day = int(line.strip())
             day = month.replace(day=current_day)
+            # This key is useful in this format because it's how the date part
+            # of an ICS formatted timestamp needs to be.
             day_key = day.strftime("%Y%m%d")
 
             current_menu = ""
@@ -77,14 +81,15 @@ def parse(page: list[str], month: datetime) -> ParseResults:
 
         try:
             # If this line parses as just a day of the week, skip it
+            # because we already have a real datetime
             datetime.strptime(f"{line.strip()}", "%A")
+
             index += 1
             continue
         except ValueError:
             pass
 
         # Menu names are uppercase, like ENTREES, which we'll use for grouping
-        # TODO: If anyone else runs this and the menu names are different, we can adjust
         if line == line.upper() and line.strip() != current_menu:
             # Get rid of the all-caps name so it looks neater
             current_menu = line.strip().capitalize()
@@ -94,13 +99,7 @@ def parse(page: list[str], month: datetime) -> ParseResults:
 
         index += 1
 
-    return ParseResults(
-        school_name=school_name,
-        grade=grade,
-        menu_name=menu_name,
-        month=month,
-        page_menu=menu,
-    )
+    return ParseResults(school=school, grade=grade, menu_name=menu_name, menu=menu)
 
 
 def main() -> int:
@@ -108,17 +107,18 @@ def main() -> int:
     with io.BytesIO(sys.stdin.buffer.read()) as input_stream:
         with PdfReader(input_stream) as reader:
             assert (
-                0 < len(reader.pages) <= 2
-            ), "This is expected to work with a 1–2 page calendar"
+                len(reader.pages) == 1
+            ), "This is designed to work with the 'Fit to One Page' printing option"
 
-            full_menu = {}
-            month = UNSET
-            for page in reader.pages:
-                text = page.extract_text().split("\n")
+            text = reader.pages[0].extract_text().split("\n")
+            result = parse(text)
 
-                result = parse(text, month)
-                month = result.month
-                full_menu.update(result.page_menu)
+            full_menu = result.menu
+            full_menu["_metadata"] = {
+                "School": result.school,
+                "Grade": result.grade,
+                "Menu": result.menu_name,
+            }
 
             sys.stdout.write(json.dumps(full_menu))
 
