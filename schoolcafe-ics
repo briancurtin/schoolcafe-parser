@@ -8,10 +8,11 @@ This script reads JSON from stdin when piped from `schoolcafe-parse`
 Example:
     cat ~/august_menu.pdf | ./schoolcafe-parse | ./schoolcafe-ics > august.ics
 
-OPTIONS:
+Environment Variables:
+    * SUMMARY_TEXT is the 'title' of the event, defaulting to 'Today's Menu'
     * By default this will create each menu as an all-day event.
-    * If you want the events to have a defined start/end time,
-      set the following environment variables to UTC timestamps:
+    * The following variables turn it into an event with a start and end.
+      Note: Timestamps are in UTC format here but get localized by your calendar.
       * MENU_START=HHMMSS
       * MENU_END=HHMMSS
       * For example, MENU_START=174500 MENU_END=181000 is my kid's 11:45–12:10 lunch
@@ -27,6 +28,7 @@ from datetime import datetime, UTC
 
 DTSTAMP = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
+SUMMARY_TEXT = os.getenv("SUMMARY_TEXT", "Today's Menu")
 MENU_START = os.getenv("MENU_START")
 MENU_END = os.getenv("MENU_END")
 
@@ -69,7 +71,7 @@ def main() -> int:
         else:
             sys.stdout.write(f"DTSTART;VALUE=DATE:{date}\n")
 
-        sys.stdout.write("SUMMARY:Today's Menu\n")
+        sys.stdout.write(f"SUMMARY:{SUMMARY_TEXT}\n")
 
         if len(menus) == 1:
             the_menu = next(iter(menus))
